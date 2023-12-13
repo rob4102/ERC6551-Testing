@@ -4,6 +4,7 @@ pragma solidity ^0.8.19;
 import "https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/audit/2023-06/contracts/token/ERC20/IERC20.sol";
 import "https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/audit/2023-06/contracts/token/ERC721/IERC721Receiver.sol";
 import "https://raw.githubusercontent.com/OpenZeppelin/openzeppelin-contracts/audit/2023-06/contracts/utils/structs/EnumerableSet.sol";
+import "./MultiSigWallet.sol"; // Replace with the correct path to your MultiSigWalletInterface.sol file
 
 //import "@openzeppelin/contracts/token/ERC721/IERC721.sol";
 
@@ -1295,89 +1296,116 @@ interface ERC20 {
     ) external returns (bool);
 }
 
-interface MultiSignatureInterface {
-    function createMultiSigWallet(uint _minSignatures, string memory _contractName) external returns (address);
-}
-
-
 contract BunyERC6551Account is IERC165, IERC1271, IERC6551Account {
-    
     uint256 private _nonce;
     uint256 public depositCount = 0;
     uint256 public nftCount = 0;
     address[] public secondaryOwners;
     mapping(uint256 => Deposit) public deposits;
+    address[] public createdWallets;
     mapping(address => uint256) tokenBalances;
-    event NewDeposit(address indexed depositor, uint256 amount, uint timestamp);
-    event WithdrawEvent(uint256 amount, address indexed recipient, uint timestamp);
+    event NewDeposit(
+        address indexed depositor,
+        uint256 amount,
+        uint256 timestamp
+    );
+    event WithdrawEvent(
+        uint256 amount,
+        address indexed recipient,
+        uint256 timestamp
+    );
     mapping(address => mapping(uint256 => uint256)) private depositIndex;
     NFTDeposit[] public nftDeposits;
-    event NftDeposited(address indexed depositor, address indexed nftAddress, uint256 indexed tokenId, uint timestamp);
-    event NftWithdrawn(address indexed nftAddress, uint256 indexed tokenId, uint timestamp);
-    MultiSignatureInterface public multiContract;
+    event NftDeposited(
+        address indexed depositor,
+        address indexed nftAddress,
+        uint256 indexed tokenId,
+        uint256 timestamp
+    );
+    event NftWithdrawn(
+        address indexed nftAddress,
+        uint256 indexed tokenId,
+        uint256 timestamp
+    );
+
+    struct ExactInputParams {
+        bytes path;
+        address recipient;
+        uint256 deadline;
+        uint256 amountIn;
+        uint256 amountOutMinimum;
+    }
+
+    struct SwapCallbackData {
+        bytes path;
+        address payer;
+    }
 
     struct NFTDeposit {
         address nftAddress;
         uint256 tokenId;
         bool isWithdrawn;
     }
-  
-   
+
     struct Deposit {
         address depositor;
         address tokenAddress;
         uint256 amount;
         uint256 timestamp;
-    }   
-
-       receive() external payable {
-        depositCount++; 
-                emit NewDeposit(msg.sender, msg.value, block.timestamp);
-
-       }
-
-modifier onlyOwner() {
-    require(
-        msg.sender == owner() || isSecondaryOwner(msg.sender),
-        "Only owner or secondary owner can call this function"
-    );
-    _;
-}
-
-  function createWallet(uint _minSignatures, string memory _contractName) public onlyOwner returns (address) {
-        return multiContract.createMultiSigWallet(_minSignatures, _contractName);
     }
 
-      function setDeployedContractAddress(address _newAddress) public onlyOwner {
-        multiContract = MultiSignatureInterface(_newAddress);
+    receive() external payable {
+        depositCount++;
+        emit NewDeposit(msg.sender, msg.value, block.timestamp);
     }
 
+    modifier onlyOwner() {
+        require(
+            msg.sender == owner() || isSecondaryOwner(msg.sender),
+            "Only owner or secondary owner can call this function"
+        );
+        _;
+    }
 
-   function depositNFT(address nftAddress, uint256 tokenId) public {
+    function depositNFT(address nftAddress, uint256 tokenId) public {
         IERC721 nft = IERC721(nftAddress);
-        require(nft.ownerOf(tokenId) == msg.sender, "You must own the token to deposit it");
+        require(
+            nft.ownerOf(tokenId) == msg.sender,
+            "You must own the token to deposit it"
+        );
         nftCount++;
-        require(nft.getApproved(tokenId) == address(this), "Contract must be approved to transfer NFT");
+        require(
+            nft.getApproved(tokenId) == address(this),
+            "Contract must be approved to transfer NFT"
+        );
         nft.safeTransferFrom(msg.sender, address(this), tokenId);
         nftDeposits.push(NFTDeposit(nftAddress, tokenId, false));
         depositIndex[nftAddress][tokenId] = nftDeposits.length - 1;
-        emit NftDeposited(msg.sender,nftAddress, tokenId, block.timestamp);
+        emit NftDeposited(msg.sender, nftAddress, tokenId, block.timestamp);
     }
 
-
-    function withdrawNFT(address nftAddress, uint256 tokenId) public onlyOwner  {
+    function withdrawNFT(address nftAddress, uint256 tokenId) public onlyOwner {
         uint256 index = depositIndex[nftAddress][tokenId];
         if (nftCount > 0) {
-        nftCount--;
+            nftCount--;
         }
         require(index < nftDeposits.length, "NFT not deposited");
         require(!nftDeposits[index].isWithdrawn, "NFT already withdrawn");
         nftDeposits[index].isWithdrawn = true;
-        IERC721(nftAddress).safeTransferFrom(address(this), msg.sender, tokenId);
+        IERC721(nftAddress).safeTransferFrom(
+            address(this),
+            msg.sender,
+            tokenId
+        );
         emit NftWithdrawn(nftAddress, tokenId, block.timestamp);
     }
 
-    function onERC721Received(address, address, uint256, bytes memory) public virtual  returns (bytes4) {
+    function onERC721Received(
+        address,
+        address,
+        uint256,
+        bytes memory
+    ) public virtual returns (bytes4) {
         return this.onERC721Received.selector;
     }
 
@@ -1386,51 +1414,55 @@ modifier onlyOwner() {
     }
 
     function isSecondaryOwner(address _address) public view returns (bool) {
-    for (uint256 i = 0; i < secondaryOwners.length; i++) {
-        if (secondaryOwners[i] == _address) {
-            return true;
+        for (uint256 i = 0; i < secondaryOwners.length; i++) {
+            if (secondaryOwners[i] == _address) {
+                return true;
+            }
         }
-    }
-    return false;
+        return false;
     }
 
     function addSecondaryOwner(address _newSecondaryOwner) public onlyOwner {
-    require(
-        _newSecondaryOwner != address(0) && !isSecondaryOwner(_newSecondaryOwner),
-        "Invalid secondary owner address or already a secondary owner"
-    );
-    secondaryOwners.push(_newSecondaryOwner);
+        require(
+            _newSecondaryOwner != address(0) &&
+                !isSecondaryOwner(_newSecondaryOwner),
+            "Invalid secondary owner address or already a secondary owner"
+        );
+        secondaryOwners.push(_newSecondaryOwner);
     }
 
-
- function withdrawERC20(address tokenAddress, address recipient, uint256 amount) public onlyOwner {     
+    function withdrawERC20(
+        address tokenAddress,
+        address recipient,
+        uint256 amount
+    ) public onlyOwner {
         IERC20 token = IERC20(tokenAddress);
-        require(token.balanceOf(address(this)) >= amount, "Insufficient token balance.");
-                token.transfer(recipient, amount);
+        require(
+            token.balanceOf(address(this)) >= amount,
+            "Insufficient token balance."
+        );
+        token.transfer(recipient, amount);
         emit WithdrawEvent(amount, recipient, block.timestamp);
     }
 
-
-
     function deposit() public payable {
         require(msg.value > 0, "Deposit amount must be greater than 0.");
-            depositCount++; 
-            deposits[depositCount] = Deposit({
+        depositCount++;
+        deposits[depositCount] = Deposit({
             depositor: msg.sender, // address of depositor
-            tokenAddress: address(0),  // native chain token. TLOS
+            tokenAddress: address(0), // native chain token. TLOS
             amount: msg.value, // amount to deposit
             timestamp: block.timestamp // timestamp of deposit
         });
         emit NewDeposit(msg.sender, msg.value, block.timestamp);
     }
 
-
-// fetch contract tlos balance
+    // fetch contract tlos balance
     function getBalance() public view returns (uint256) {
         return address(this).balance;
     }
 
-// get specific erc20 balance
+    // get specific erc20 balance
     function getTokenBalance(address _erc20Token)
         public
         view
@@ -1439,11 +1471,123 @@ modifier onlyOwner() {
         return ERC20(_erc20Token).balanceOf(address(this));
     }
 
+    function callCreateMultiSigWallet(
+        address target,
+        uint256 _minSignatures,
+        string memory _contractName
+    ) public onlyOwner {
+        bytes memory data = encodeCreateMultiSigWalletData(
+            _minSignatures,
+            _contractName
+        );
+        executeCall(target, 0, data);
+    }
+
+    function encodeCreateMultiSigWalletData(
+        uint256 _minSignatures,
+        string memory _contractName
+    ) public pure returns (bytes memory) {
+        return
+            abi.encodeWithSignature(
+                "createMultiSigWallet(uint256,string)",
+                _minSignatures,
+                _contractName
+            );
+    }
+
+    function encodeAddOwnerData(address owner)
+        public
+        pure
+        returns (bytes memory)
+    {
+        return abi.encodeWithSignature("addOwner(address)", owner);
+    }
+
+    function encodeGetPendingTransactionsData()
+        public
+        pure
+        returns (bytes memory)
+    {
+        return abi.encodeWithSignature("getPendingTransactions()");
+    }
+
+    function encodeSignTransactionData(uint256 transactionId)
+        public
+        pure
+        returns (bytes memory)
+    {
+        return
+            abi.encodeWithSignature("signTransaction(uint256)", transactionId);
+    }
+
+    function encodeTransferToData(address to, uint256 amount)
+        public
+        pure
+        returns (bytes memory)
+    {
+        return
+            abi.encodeWithSignature("transferTo(address,uint256)", to, amount);
+    }
+
+    function encodeExactInputFunctionCall(ExactInputParams memory params)
+        public
+        pure
+        returns (bytes memory)
+    {
+        return
+            abi.encodeWithSignature(
+                "exactInput((address,uint256,bytes,address,uint256))",
+                params
+            );
+    }
+
+    // Example function to demonstrate a call to `exactInput`
+    function callExactInput(
+        address targetContract,
+        ExactInputParams memory params
+    ) public payable {
+        // Encode the function call
+        bytes memory payload = encodeExactInputFunctionCall(params);
+
+        // Make the low-level call
+        (bool success, bytes memory returnData) = targetContract.call{
+            value: msg.value
+        }(payload);
+
+        // Handle failure (e.g., revert) if the call was not successful
+        require(success, "Call to target contract failed");
+
+        // Optionally, process returnData if needed
+    }
+
+    function callSignTransaction(address target, uint256 transactionId)
+        public
+        onlyOwner
+    {
+        bytes memory data = encodeSignTransactionData(transactionId);
+        executeCall(target, 0, data);
+    }
+
+    function callTransferTo(
+        address target,
+        address to,
+        uint256 amount
+    ) public onlyOwner {
+        bytes memory data = encodeTransferToData(to, amount);
+        executeCall(target, 0, data);
+    }
+
+    function callAddOwner(address target, address owner) public onlyOwner {
+        bytes memory data = encodeAddOwnerData(owner);
+        executeCall(target, 0, data);
+    }
+
+    // util execute call
     function executeCall(
         address to,
         uint256 value,
-        bytes calldata data
-    ) public onlyOwner payable returns (bytes memory result) {
+        bytes memory data
+    ) public payable onlyOwner returns (bytes memory result) {
         bool success;
         (success, result) = to.call{value: value}(data);
         if (!success) {
@@ -1451,7 +1595,6 @@ modifier onlyOwner() {
                 revert(add(result, 32), mload(result))
             }
         }
-        _nonce += 1;
     }
 
     function withdraw(uint256 amount) public onlyOwner {
@@ -1460,11 +1603,13 @@ modifier onlyOwner() {
         emit WithdrawEvent(amount, msg.sender, block.timestamp);
     }
 
-    function withdrawTo(address payable recipient, uint256 amount) public onlyOwner {
+    function withdrawTo(address payable recipient, uint256 amount)
+        public
+        onlyOwner
+    {
         require(amount <= address(this).balance, "Insufficient balance.");
         recipient.transfer(amount);
     }
-
 
     function token()
         external
